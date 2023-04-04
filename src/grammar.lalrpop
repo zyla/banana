@@ -1,0 +1,113 @@
+use crate::ir::*;
+use std::str::FromStr;
+
+grammar<'err>(db: &dyn crate::Db);
+
+match {
+    "+",
+    "-",
+    "*",
+    "/",
+    "(",
+    ")",
+    ";",
+    "=",
+    "fn",
+    "print",
+    ",",
+    r"[0-9]+",
+    r"[a-zA-Z_][a-zA-Z_0-9]*",
+
+    // Skip whitespace and comments
+    r"\s*" => { },
+    r"//[^\n\r]*[\n\r]*" => { }, // `// comment`
+    r"/\*([^\*]*\*+[^\*/])*([^\*]*\*+|[^\*])*\*/" => { }, // `/* comment */`
+}
+
+pub Program = Statement*;
+
+Statement: Statement = {
+  <start:@L> <x:StatementData> <end:@R> => Statement::new(Span::new(DefId::unknown(db), start, end), x),
+};
+
+StatementData: StatementData = {
+  Function,
+  PrintStatement,
+};
+
+Function: StatementData = {
+  "fn" <name_start:@L> <name:FunctionId> <name_end:@R> "(" <args:SepBy<VariableId, ",">> ")" "=" <body:Expr> ";" =>
+    StatementData::Function {
+      name,
+      data: FunctionData::new(Span::new(DefId::unknown(db), name_start, name_end), args, body)
+    }
+};
+
+PrintStatement: StatementData = {
+  "print" <Expr> ";" => StatementData::Print(<>),
+};
+
+pub Expr: Expression = SpannedExpr<Expr1>;
+
+SpannedExpr<T>: Expression = {
+  <start:@L> <x:T> <end:@R> => Expression::new(Span::new(DefId::unknown(db), start, end), x),
+}
+
+Expr1: ExpressionData = {
+    <l:Box<SpannedExpr<Expr1>>> "+" <r:Box<SpannedExpr<Expr2>>> =>
+      ExpressionData::Op(l, Op::Add, r),
+    <l:Box<SpannedExpr<Expr1>>> "-" <r:Box<SpannedExpr<Expr2>>> =>
+      ExpressionData::Op(l, Op::Subtract, r),
+    Expr2,
+};
+
+Expr2: ExpressionData = {
+    <l:Box<SpannedExpr<Expr2>>> "*" <r:Box<SpannedExpr<Expr3>>> =>
+      ExpressionData::Op(l, Op::Multiply, r),
+    <l:Box<SpannedExpr<Expr2>>> "/" <r:Box<SpannedExpr<Expr3>>> =>
+      ExpressionData::Op(l, Op::Divide, r),
+    Expr3,
+};
+
+Expr3 = Term;
+
+Term: ExpressionData = {
+    Num => ExpressionData::Number((<> as f64).into()),
+    VariableId => ExpressionData::Variable(<>),
+    <f:FunctionId> "(" <args:SepBy<Expr, ",">> ")" => ExpressionData::Call(f, args),
+    "(" <Expr1> ")",
+};
+
+Num: i32 = {
+    r"[0-9]+" => i32::from_str(<>).unwrap(),
+};
+
+VariableId: VariableId = {
+  Ident => VariableId::new(db, <>),
+};
+
+FunctionId: FunctionId = {
+  Ident => FunctionId::new(db, <>),
+};
+
+Ident: String = {
+    r"[a-zA-Z_][a-zA-Z_0-9]*" => <>.into(),
+}
+
+/// Utilities
+
+Box<T>: Box<T> = {
+  <T> => Box::new(<>)
+};
+
+SepBy<T, Sep>: Vec<T> = {
+    <v:(<T> Sep)*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            let mut v = v;
+            v.push(e);
+            v
+        }
+    }
+};
+

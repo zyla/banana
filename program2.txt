@@ -1,0 +1,4 @@
+fn func1(x) = x+1;
+fn func2() = 2;
+fn func3() = 3 + 92384 + 094 * 3984;
+fn func4() = x;
